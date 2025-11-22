@@ -1,4 +1,6 @@
 import logging
+import json
+from typing import Annotated, List, Optional, TypedDict
 
 from dotenv import load_dotenv
 from livekit.agents import (
@@ -12,8 +14,8 @@ from livekit.agents import (
     cli,
     metrics,
     tokenize,
-    # function_tool,
-    # RunContext
+    function_tool,
+    RunContext
 )
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
@@ -22,32 +24,81 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
+class OrderDetails(TypedDict):
+    drinkType: str
+    size: str
+    milk: str
+    extras: List[str]
+    name: str
 
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(
-            instructions="""You are a helpful voice AI assistant. The user is interacting with you via voice, even if you perceive the conversation as text.
-            You eagerly assist users with their questions by providing information from your extensive knowledge.
-            Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
-            You are curious, friendly, and have a sense of humor.""",
-        )
+            instructions="""You are a friendly barista at "CodeBrew Coffee".
+            Your goal is to take the user's order efficiently and kindly.
+            You must fill out the following order details: drinkType, size, milk, extras (optional), and the customer's name.
 
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
+            Ask clarifying questions to get the missing information.
+            Start by greeting the customer and asking what they would like.
+
+            Once you have all the necessary details (drinkType, size, milk, name), verify the order with the user.
+            If they confirm, use the 'submit_order' tool to finalize the order.
+            Use 'update_order' to update the order state as you get information.
+            """,
+        )
+        self.order_state: OrderDetails = {
+            "drinkType": "",
+            "size": "",
+            "milk": "",
+            "extras": [],
+            "name": ""
+        }
+
+    @function_tool
+    async def update_order(
+        self,
+        ctx: RunContext,
+        drink_type: Annotated[Optional[str], "The type of drink (e.g., Latte, Cappuccino)"] = None,
+        size: Annotated[Optional[str], "The size of the drink (e.g., Small, Medium, Large)"] = None,
+        milk: Annotated[Optional[str], "The type of milk (e.g., Whole, Oat, Almond)"] = None,
+        extras: Annotated[Optional[List[str]], "Any extras (e.g., sugar, syrup)"] = None,
+        name: Annotated[Optional[str], "The customer's name"] = None
+    ):
+        """
+        Update the current order details. Only provide fields that need to be updated.
+        """
+        if drink_type:
+            self.order_state["drinkType"] = drink_type
+        if size:
+            self.order_state["size"] = size
+        if milk:
+            self.order_state["milk"] = milk
+        if extras is not None:
+            self.order_state["extras"] = extras
+        if name:
+            self.order_state["name"] = name
+
+        logger.info(f"Order updated: {self.order_state}")
+        return f"Order updated. Current state: {self.order_state}"
+
+    @function_tool
+    async def submit_order(self, ctx: RunContext):
+        """
+        Finalize and submit the order. Call this only when all details (drinkType, size, milk, name) are confirmed.
+        """
+        # Check if required fields are present
+        required = ["drinkType", "size", "milk", "name"]
+        missing = [field for field in required if not self.order_state[field]]
+
+        if missing:
+            return f"Cannot submit order. Missing details: {', '.join(missing)}. Please ask the user for these."
+
+        filename = "order.json"
+        with open(filename, "w") as f:
+            json.dump(self.order_state, f, indent=2)
+
+        logger.info(f"Order submitted: {self.order_state}")
+        return "Order submitted successfully!"
 
 
 def prewarm(proc: JobProcess):
@@ -88,16 +139,6 @@ async def entrypoint(ctx: JobContext):
         preemptive_generation=True,
     )
 
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead.
-    # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
-    # 1. Install livekit-agents[openai]
-    # 2. Set OPENAI_API_KEY in .env.local
-    # 3. Add `from livekit.plugins import openai` to the top of this file
-    # 4. Use the following session setup instead of the version above
-    # session = AgentSession(
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
-
     # Metrics collection, to measure pipeline performance
     # For more information, see https://docs.livekit.io/agents/build/metrics/
     usage_collector = metrics.UsageCollector()
@@ -112,14 +153,6 @@ async def entrypoint(ctx: JobContext):
         logger.info(f"Usage: {summary}")
 
     ctx.add_shutdown_callback(log_usage)
-
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
 
     # Start the session, which initializes the voice pipeline and warms up the models
     await session.start(
