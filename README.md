@@ -27,7 +27,7 @@ This is Day 1 of the #MurfAIVoiceAgentsChallenge #10DaysofAIVoiceAgents
 This is a monorepo that contains both the backend and frontend for building voice agent applications. It's designed to be your starting point for each day's challenge task.
 
 ```
-first_day_Task-Murf-AI-/
+ten-days-of-voice-agents-2025/
 ├── backend/          # LiveKit Agents backend with Murf Falcon TTS
 ├── frontend/         # React/Next.js frontend for voice interaction
 ├── challenges/       # Daily challenge tasks
